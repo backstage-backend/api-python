@@ -1,0 +1,75 @@
+name: Deploy Lambda infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - terraform/**
+      - lambda/**
+      - src/**
+      - package.json
+      - requirements.txt
+      - .github/workflows/deploy-infrastructure.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_STATE_KEY: services/api-python/lambda.tfstate
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: aws-infrastructure
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Node.js dependencies
+        if: false
+        run: npm install --omit=dev
+
+      - uses: actions/setup-python@v5
+        if: false
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        if: false
+        run: pip install -r requirements.txt -t .
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: Terraform init
+        working-directory: lambda/terraform
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_api_gateway_name: ${{ vars.API_GATEWAY_NAME }}
+        run: |
+          test -n "$TF_STATE_BUCKET" || { echo "::error::TF_STATE_BUCKET is required"; exit 1; }
+          test -n "$TF_VAR_aws_region" || { echo "::error::AWS_REGION is required"; exit 1; }
+          test -n "$TF_VAR_api_gateway_name" || { echo "::error::API_GATEWAY_NAME is required"; exit 1; }
+          terraform init \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=$TF_STATE_KEY" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform apply
+        working-directory: lambda/terraform
+        run: terraform apply -auto-approve
